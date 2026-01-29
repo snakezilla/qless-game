@@ -1,5 +1,5 @@
 // Q-Less Game State Management
-import { isValidWord } from './words';
+import { isValidWord, VALID_WORDS } from './words';
 
 export interface Letter {
   id: string;
@@ -346,4 +346,309 @@ export function shuffleUnplacedLetters(state: GameState): GameState {
     ...state,
     letters: newLetters,
   };
+}
+
+// ============ AUTO-SOLVE ALGORITHM ============
+
+interface Placement {
+  letterId: string;
+  row: number;
+  col: number;
+}
+
+// Find all valid words that can be made from given letters
+function findValidWordsFromLetters(letters: string[]): string[] {
+  const letterCount = new Map<string, number>();
+  for (const l of letters) {
+    letterCount.set(l.toLowerCase(), (letterCount.get(l.toLowerCase()) || 0) + 1);
+  }
+
+  const validWords: string[] = [];
+  
+  for (const word of VALID_WORDS) {
+    if (word.length < 3 || word.length > letters.length) continue;
+    
+    const wordLetterCount = new Map<string, number>();
+    for (const c of word) {
+      wordLetterCount.set(c, (wordLetterCount.get(c) || 0) + 1);
+    }
+    
+    let canMake = true;
+    for (const [char, count] of wordLetterCount) {
+      if ((letterCount.get(char) || 0) < count) {
+        canMake = false;
+        break;
+      }
+    }
+    
+    if (canMake) {
+      validWords.push(word);
+    }
+  }
+  
+  // Sort by length descending (longer words = more constraining = faster pruning)
+  validWords.sort((a, b) => b.length - a.length);
+  return validWords;
+}
+
+// Get remaining letters after using some for words
+function getRemainingLetters(letters: string[], usedWords: string[]): string[] {
+  const remaining = [...letters.map(l => l.toLowerCase())];
+  for (const word of usedWords) {
+    for (const c of word) {
+      const idx = remaining.indexOf(c);
+      if (idx !== -1) remaining.splice(idx, 1);
+    }
+  }
+  return remaining;
+}
+
+// Try to place a word on the grid, returns new grid or null if invalid
+function tryPlaceWord(
+  grid: (string | null)[][],
+  word: string,
+  startRow: number,
+  startCol: number,
+  direction: 'h' | 'v'
+): (string | null)[][] | null {
+  const newGrid = grid.map(r => [...r]);
+  
+  for (let i = 0; i < word.length; i++) {
+    const row = direction === 'h' ? startRow : startRow + i;
+    const col = direction === 'h' ? startCol + i : startCol;
+    
+    // Out of bounds
+    if (row < 0 || row >= 8 || col < 0 || col >= 8) return null;
+    
+    const existing = newGrid[row][col];
+    if (existing && existing !== word[i]) return null; // Conflict
+    
+    newGrid[row][col] = word[i];
+  }
+  
+  // Check for invalid adjacent letters (would form invalid words)
+  // Check cells before and after the word
+  if (direction === 'h') {
+    if (startCol > 0 && newGrid[startRow][startCol - 1]) return null;
+    if (startCol + word.length < 8 && newGrid[startRow][startCol + word.length]) return null;
+  } else {
+    if (startRow > 0 && newGrid[startRow - 1][startCol]) return null;
+    if (startRow + word.length < 8 && newGrid[startRow + word.length][startCol]) return null;
+  }
+  
+  return newGrid;
+}
+
+// Check if word intersects with existing grid
+function findIntersections(
+  grid: (string | null)[][],
+  word: string
+): { row: number; col: number; direction: 'h' | 'v' }[] {
+  const positions: { row: number; col: number; direction: 'h' | 'v' }[] = [];
+  
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const cell = grid[row][col];
+      if (!cell) continue;
+      
+      // Find where this letter appears in the word
+      for (let i = 0; i < word.length; i++) {
+        if (word[i] === cell) {
+          // Try horizontal placement
+          const hStart = col - i;
+          if (hStart >= 0 && hStart + word.length <= 8) {
+            positions.push({ row, col: hStart, direction: 'h' });
+          }
+          // Try vertical placement
+          const vStart = row - i;
+          if (vStart >= 0 && vStart + word.length <= 8) {
+            positions.push({ row: vStart, col, direction: 'v' });
+          }
+        }
+      }
+    }
+  }
+  
+  return positions;
+}
+
+// Validate all words on grid are valid
+function validateGrid(grid: (string | null)[][]): boolean {
+  // Check horizontal words
+  for (let row = 0; row < 8; row++) {
+    let word = '';
+    for (let col = 0; col <= 8; col++) {
+      const cell = col < 8 ? grid[row][col] : null;
+      if (cell) {
+        word += cell;
+      } else if (word.length >= 2) {
+        if (word.length >= 3 && !isValidWord(word)) return false;
+        if (word.length === 2) return false; // 2-letter sequences not allowed
+        word = '';
+      } else {
+        word = '';
+      }
+    }
+  }
+  
+  // Check vertical words
+  for (let col = 0; col < 8; col++) {
+    let word = '';
+    for (let row = 0; row <= 8; row++) {
+      const cell = row < 8 ? grid[row][col] : null;
+      if (cell) {
+        word += cell;
+      } else if (word.length >= 2) {
+        if (word.length >= 3 && !isValidWord(word)) return false;
+        if (word.length === 2) return false;
+        word = '';
+      } else {
+        word = '';
+      }
+    }
+  }
+  
+  return true;
+}
+
+// Count letters on grid
+function countGridLetters(grid: (string | null)[][]): number {
+  let count = 0;
+  for (const row of grid) {
+    for (const cell of row) {
+      if (cell) count++;
+    }
+  }
+  return count;
+}
+
+// Backtracking solver
+function solveBacktrack(
+  grid: (string | null)[][],
+  remainingLetters: string[],
+  validWords: string[],
+  depth: number = 0
+): (string | null)[][] | null {
+  // If we've used all letters and grid is valid, we're done!
+  if (remainingLetters.length === 0) {
+    return validateGrid(grid) ? grid : null;
+  }
+  
+  // Limit depth to prevent infinite loops
+  if (depth > 15) return null;
+  
+  // Find words we can still make with remaining letters
+  const possibleWords = validWords.filter(word => {
+    const needed = new Map<string, number>();
+    for (const c of word) {
+      needed.set(c, (needed.get(c) || 0) + 1);
+    }
+    const available = new Map<string, number>();
+    for (const c of remainingLetters) {
+      available.set(c, (available.get(c) || 0) + 1);
+    }
+    for (const [char, count] of needed) {
+      if ((available.get(char) || 0) < count) return false;
+    }
+    return true;
+  });
+  
+  // If no grid content yet, place first word in center
+  if (countGridLetters(grid) === 0) {
+    for (const word of possibleWords.slice(0, 20)) { // Try top 20 longest
+      const startCol = Math.floor((8 - word.length) / 2);
+      const startRow = 3;
+      
+      const newGrid = tryPlaceWord(grid, word, startRow, startCol, 'h');
+      if (newGrid && validateGrid(newGrid)) {
+        const newRemaining = getRemainingLetters(remainingLetters.map(l => l.toUpperCase()), [word]).map(l => l.toLowerCase());
+        const result = solveBacktrack(newGrid, newRemaining, possibleWords, depth + 1);
+        if (result) return result;
+      }
+    }
+    return null;
+  }
+  
+  // Try to place words that intersect with existing grid
+  for (const word of possibleWords.slice(0, 30)) {
+    const intersections = findIntersections(grid, word);
+    
+    for (const { row, col, direction } of intersections) {
+      const newGrid = tryPlaceWord(grid, word, row, col, direction);
+      if (newGrid && validateGrid(newGrid)) {
+        // Calculate new remaining letters
+        const gridBefore = countGridLetters(grid);
+        const gridAfter = countGridLetters(newGrid);
+        const lettersAdded = gridAfter - gridBefore;
+        
+        if (lettersAdded > 0 && lettersAdded <= remainingLetters.length) {
+          // Figure out which letters we used (the new ones)
+          const usedLetters: string[] = [];
+          for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+              if (newGrid[r][c] && !grid[r][c]) {
+                usedLetters.push(newGrid[r][c]!);
+              }
+            }
+          }
+          
+          const newRemaining = [...remainingLetters];
+          for (const used of usedLetters) {
+            const idx = newRemaining.indexOf(used);
+            if (idx !== -1) newRemaining.splice(idx, 1);
+          }
+          
+          const result = solveBacktrack(newGrid, newRemaining, possibleWords, depth + 1);
+          if (result) return result;
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+export interface SolveResult {
+  placements: Placement[];
+  success: boolean;
+}
+
+export function solvePuzzle(letters: Letter[]): SolveResult {
+  const letterChars = letters.map(l => l.char.toLowerCase());
+  const validWords = findValidWordsFromLetters(letterChars);
+  
+  if (validWords.length === 0) {
+    return { placements: [], success: false };
+  }
+  
+  // Create empty grid
+  const emptyGrid: (string | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
+  
+  const solution = solveBacktrack(emptyGrid, letterChars, validWords, 0);
+  
+  if (!solution) {
+    return { placements: [], success: false };
+  }
+  
+  // Convert grid solution to placements
+  const placements: Placement[] = [];
+  const usedLetterIds = new Set<string>();
+  
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const char = solution[row][col];
+      if (char) {
+        // Find a letter with this char that hasn't been used yet
+        const letter = letters.find(
+          l => l.char.toLowerCase() === char && !usedLetterIds.has(l.id)
+        );
+        if (letter) {
+          usedLetterIds.add(letter.id);
+          placements.push({ letterId: letter.id, row, col });
+        }
+      }
+    }
+  }
+  
+  return { placements, success: placements.length === letters.length };
 }

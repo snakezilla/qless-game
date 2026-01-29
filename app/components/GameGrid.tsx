@@ -12,7 +12,9 @@ interface GameGridProps {
   onLetterDragStart: (e: React.DragEvent, letter: Letter) => void;
   onLetterDragEnd: () => void;
   onLetterClick: (letter: Letter) => void;
+  onCellClick: (row: number, col: number) => void;
   draggingLetter: Letter | null;
+  selectedLetterId: string | null;
 }
 
 export default function GameGrid({
@@ -23,7 +25,9 @@ export default function GameGrid({
   onLetterDragStart,
   onLetterDragEnd,
   onLetterClick,
+  onCellClick,
   draggingLetter,
+  selectedLetterId,
 }: GameGridProps) {
   // Create a map of cell positions to their word validity status
   const cellStatus = new Map<string, { isValid: boolean; isInvalid: boolean }>();
@@ -53,7 +57,8 @@ export default function GameGrid({
           row.map((cell, colIdx) => {
             const key = `${rowIdx},${colIdx}`;
             const status = cellStatus.get(key);
-            const isHighlighted = draggingLetter && !cell;
+            const isHighlighted = (draggingLetter || selectedLetterId) && !cell;
+            const isSelectHighlighted = selectedLetterId && !cell;
 
             return (
               <motion.div
@@ -66,6 +71,11 @@ export default function GameGrid({
                   onDrop(rowIdx, colIdx);
                 }}
                 onDragOver={onDragOver}
+                onClick={() => {
+                  if (!cell && selectedLetterId) {
+                    onCellClick(rowIdx, colIdx);
+                  }
+                }}
                 className={`
                   relative aspect-square w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14
                   rounded-lg transition-all duration-200
@@ -74,7 +84,11 @@ export default function GameGrid({
                     : 'bg-slate-700/30 border border-slate-600/30'
                   }
                   ${isHighlighted 
-                    ? 'bg-slate-600/50 border-slate-500/50 shadow-inner' 
+                    ? 'bg-slate-600/50 border-slate-500/50 shadow-inner cursor-pointer' 
+                    : ''
+                  }
+                  ${isSelectHighlighted
+                    ? 'hover:bg-purple-500/20 hover:border-purple-500/50'
                     : ''
                   }
                 `}
@@ -94,12 +108,16 @@ export default function GameGrid({
                   </div>
                 )}
 
-                {/* Drop indicator */}
+                {/* Drop/Place indicator */}
                 {isHighlighted && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="absolute inset-2 rounded-lg border-2 border-dashed border-blue-400/50"
+                    className={`absolute inset-2 rounded-lg border-2 border-dashed ${
+                      isSelectHighlighted 
+                        ? 'border-purple-400/50' 
+                        : 'border-blue-400/50'
+                    }`}
                   />
                 )}
               </motion.div>

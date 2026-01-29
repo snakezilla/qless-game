@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   GameState,
@@ -9,6 +9,7 @@ import {
   placeLetter,
   removeLetter,
   shuffleUnplacedLetters,
+  solvePuzzle,
 } from '../lib/gameState';
 import GameGrid from './GameGrid';
 import DiceTray from './DiceTray';
@@ -17,9 +18,13 @@ import WinModal from './WinModal';
 export default function Game() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [draggingLetter, setDraggingLetter] = useState<Letter | null>(null);
+  const [selectedLetterId, setSelectedLetterId] = useState<string | null>(null);
   const [isRolling, setIsRolling] = useState(true);
   const [timer, setTimer] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [isSolving, setIsSolving] = useState(false);
+  const [solveError, setSolveError] = useState<string | null>(null);
+  const solveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize game
   useEffect(() => {
@@ -49,6 +54,7 @@ export default function Game() {
   const handleDragStart = useCallback((e: React.DragEvent, letter: Letter) => {
     e.dataTransfer.setData('letterId', letter.id);
     setDraggingLetter(letter);
+    setSelectedLetterId(null); // Clear selection when dragging
   }, []);
 
   const handleDragEnd = useCallback(() => {
@@ -71,20 +77,105 @@ export default function Game() {
     }
   }, [gameState, draggingLetter]);
 
-  const handleLetterClick = useCallback((letter: Letter) => {
-    if (!gameState || !letter.position) return;
+  // Click on a letter in the tray to select it
+  const handleTrayLetterClick = useCallback((letter: Letter) => {
+    if (isSolving) return;
+    
+    // Toggle selection
+    if (selectedLetterId === letter.id) {
+      setSelectedLetterId(null);
+    } else {
+      setSelectedLetterId(letter.id);
+    }
+  }, [selectedLetterId, isSolving]);
+
+  // Click on a placed letter to remove it
+  const handlePlacedLetterClick = useCallback((letter: Letter) => {
+    if (!gameState || !letter.position || isSolving) return;
     const newState = removeLetter(gameState, letter.id);
     setGameState(newState);
-  }, [gameState]);
+    setSelectedLetterId(null);
+  }, [gameState, isSolving]);
+
+  // Click on an empty cell to place selected letter
+  const handleCellClick = useCallback((row: number, col: number) => {
+    if (!gameState || !selectedLetterId || isSolving) return;
+
+    const newState = placeLetter(gameState, selectedLetterId, row, col);
+    setGameState(newState);
+    setSelectedLetterId(null);
+
+    if (newState.isWon) {
+      setIsTimerRunning(false);
+    }
+  }, [gameState, selectedLetterId, isSolving]);
 
   const handleShuffle = useCallback(() => {
-    if (!gameState) return;
+    if (!gameState || isSolving) return;
     setGameState(shuffleUnplacedLetters(gameState));
-  }, [gameState]);
+    setSelectedLetterId(null);
+  }, [gameState, isSolving]);
+
+  const handleSolve = useCallback(async () => {
+    if (!gameState || isSolving) return;
+
+    setIsSolving(true);
+    setSolveError(null);
+    setSelectedLetterId(null);
+
+    // Clear existing placements first
+    let clearedState = gameState;
+    for (const letter of gameState.letters) {
+      if (letter.position) {
+        clearedState = removeLetter(clearedState, letter.id);
+      }
+    }
+    setGameState(clearedState);
+
+    // Small delay for visual effect
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // Run solver
+    const result = solvePuzzle(clearedState.letters);
+
+    if (!result.success) {
+      setSolveError('No solution found');
+      setIsSolving(false);
+      
+      // Clear error after 2 seconds
+      solveTimeoutRef.current = setTimeout(() => {
+        setSolveError(null);
+      }, 2000);
+      return;
+    }
+
+    // Animate letters one by one
+    let currentState = clearedState;
+    for (let i = 0; i < result.placements.length; i++) {
+      const placement = result.placements[i];
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      currentState = placeLetter(currentState, placement.letterId, placement.row, placement.col);
+      setGameState(currentState);
+    }
+
+    setIsSolving(false);
+
+    if (currentState.isWon) {
+      setIsTimerRunning(false);
+    }
+  }, [gameState, isSolving]);
 
   const handleNewGame = useCallback(() => {
+    if (solveTimeoutRef.current) {
+      clearTimeout(solveTimeoutRef.current);
+    }
     setIsRolling(true);
     setIsTimerRunning(false);
+    setSelectedLetterId(null);
+    setIsSolving(false);
+    setSolveError(null);
     setTimeout(() => {
       setGameState(createInitialState());
       setTimer(0);
@@ -192,8 +283,10 @@ export default function Game() {
                   onDragOver={handleDragOver}
                   onLetterDragStart={handleDragStart}
                   onLetterDragEnd={handleDragEnd}
-                  onLetterClick={handleLetterClick}
+                  onLetterClick={handlePlacedLetterClick}
+                  onCellClick={handleCellClick}
                   draggingLetter={draggingLetter}
+                  selectedLetterId={selectedLetterId}
                 />
               </div>
 
@@ -203,7 +296,9 @@ export default function Game() {
                   letters={gameState.letters}
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
+                  onLetterClick={handleTrayLetterClick}
                   draggingLetter={draggingLetter}
+                  selectedLetterId={selectedLetterId}
                 />
               </div>
 
@@ -218,19 +313,55 @@ export default function Game() {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleShuffle}
-                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 transition-all flex items-center justify-center gap-2"
+                  disabled={isSolving}
+                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span>🔀</span> Shuffle
                 </motion.button>
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
+                  onClick={handleSolve}
+                  disabled={isSolving}
+                  className="py-3 px-4 rounded-xl font-medium text-slate-300 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/30 hover:border-purple-500/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <motion.span
+                    animate={isSolving ? { rotate: 360 } : { rotate: 0 }}
+                    transition={{ duration: 1, repeat: isSolving ? Infinity : 0, ease: 'linear' }}
+                  >
+                    ✨
+                  </motion.span>
+                  {isSolving ? 'Solving...' : 'Solve'}
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={handleNewGame}
-                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2"
+                  disabled={isSolving}
+                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span>🎲</span> New Game
                 </motion.button>
               </motion.div>
+
+              {/* Solve Error Toast */}
+              <AnimatePresence>
+                {solveError && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                    className="mt-4 py-2 px-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-sm text-center"
+                  >
+                    <motion.span
+                      animate={{ x: [0, -3, 3, -3, 3, 0] }}
+                      transition={{ duration: 0.4 }}
+                    >
+                      {solveError}
+                    </motion.span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Word feedback */}
               {gameState.words.length > 0 && (
@@ -288,7 +419,7 @@ export default function Game() {
         transition={{ delay: 1 }}
         className="fixed bottom-4 left-4 right-4 text-center text-slate-500 text-xs"
       >
-        Drag letters to the grid • Click placed letters to remove • All words must be 3+ letters
+        Drag or click letters to place • Click placed letters to remove • All words must be 3+ letters
       </motion.div>
     </div>
   );

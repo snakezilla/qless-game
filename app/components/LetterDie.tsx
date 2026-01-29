@@ -7,6 +7,7 @@ interface LetterDieProps {
   letter: Letter;
   isPlaced: boolean;
   isDragging: boolean;
+  isSelected?: boolean;
   onDragStart: (e: React.DragEvent, letter: Letter) => void;
   onDragEnd: () => void;
   onClick?: () => void;
@@ -18,6 +19,7 @@ export default function LetterDie({
   letter,
   isPlaced,
   isDragging,
+  isSelected,
   onDragStart,
   onDragEnd,
   onClick,
@@ -25,6 +27,9 @@ export default function LetterDie({
   isPartOfValidWord,
 }: LetterDieProps) {
   const getGlowStyle = () => {
+    if (isSelected) {
+      return '0 0 20px rgba(147, 51, 234, 0.7), 0 0 40px rgba(147, 51, 234, 0.4), 0 0 60px rgba(59, 130, 246, 0.3)';
+    }
     if (isPartOfValidWord && !isPartOfInvalidWord) {
       return '0 0 20px rgba(34, 197, 94, 0.6), 0 0 40px rgba(34, 197, 94, 0.3)';
     }
@@ -42,16 +47,17 @@ export default function LetterDie({
       onClick={onClick}
       initial={isPlaced ? { scale: 0.8, opacity: 0 } : { scale: 1 }}
       animate={{
-        scale: isDragging ? 1.1 : 1,
+        scale: isDragging ? 1.1 : isSelected ? 1.08 : 1,
         opacity: 1,
         rotateY: 0,
+        y: isSelected ? -4 : 0,
       }}
-      whileHover={{ scale: 1.05, y: -2 }}
+      whileHover={{ scale: isSelected ? 1.08 : 1.05, y: isSelected ? -4 : -2 }}
       whileTap={{ scale: 0.95 }}
       transition={{ type: 'spring', stiffness: 400, damping: 25 }}
       className={`
         relative w-12 h-12 sm:w-14 sm:h-14 cursor-grab active:cursor-grabbing select-none
-        ${isDragging ? 'z-50' : 'z-10'}
+        ${isDragging ? 'z-50' : isSelected ? 'z-40' : 'z-10'}
       `}
       style={{
         boxShadow: getGlowStyle(),
@@ -98,6 +104,27 @@ export default function LetterDie({
             background: 'linear-gradient(135deg, rgba(255,255,255,0.4) 0%, transparent 50%)',
           }}
         />
+
+        {/* Selected pulse ring */}
+        {isSelected && (
+          <motion.div
+            className="absolute inset-0 rounded-xl pointer-events-none"
+            initial={{ opacity: 0.6, scale: 1 }}
+            animate={{ 
+              opacity: [0.6, 0.3, 0.6],
+              scale: [1, 1.05, 1],
+            }}
+            transition={{
+              duration: 1.5,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+            style={{
+              border: '2px solid rgba(147, 51, 234, 0.8)',
+              boxShadow: '0 0 15px rgba(147, 51, 234, 0.5)',
+            }}
+          />
+        )}
       </div>
     </motion.div>
   );

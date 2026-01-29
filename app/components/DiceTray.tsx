@@ -8,14 +8,18 @@ interface DiceTrayProps {
   letters: Letter[];
   onDragStart: (e: React.DragEvent, letter: Letter) => void;
   onDragEnd: () => void;
+  onLetterClick: (letter: Letter) => void;
   draggingLetter: Letter | null;
+  selectedLetterId: string | null;
 }
 
 export default function DiceTray({
   letters,
   onDragStart,
   onDragEnd,
+  onLetterClick,
   draggingLetter,
+  selectedLetterId,
 }: DiceTrayProps) {
   const unplacedLetters = letters.filter(l => l.position === null);
 
@@ -51,8 +55,10 @@ export default function DiceTray({
                 letter={letter}
                 isPlaced={false}
                 isDragging={draggingLetter?.id === letter.id}
+                isSelected={selectedLetterId === letter.id}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
+                onClick={() => onLetterClick(letter)}
               />
             </motion.div>
           ))
