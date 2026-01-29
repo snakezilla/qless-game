@@ -24,6 +24,7 @@ export default function Game() {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isSolving, setIsSolving] = useState(false);
   const [solveError, setSolveError] = useState<string | null>(null);
+  const [solveMessage, setSolveMessage] = useState<string | null>(null);
   const solveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize game
@@ -121,6 +122,7 @@ export default function Game() {
 
     setIsSolving(true);
     setSolveError(null);
+    setSolveMessage(null);
     setSelectedLetterId(null);
 
     // Clear existing placements first
@@ -139,22 +141,31 @@ export default function Game() {
     const result = solvePuzzle(clearedState.letters);
 
     if (!result.success) {
-      setSolveError('No solution found');
+      setSolveError('No solution found - try a new game!');
       setIsSolving(false);
       
-      // Clear error after 2 seconds
+      // Clear error after 3 seconds
       solveTimeoutRef.current = setTimeout(() => {
         setSolveError(null);
-      }, 2000);
+      }, 3000);
       return;
     }
 
-    // Animate letters one by one
+    // Show message if solved with 11 letters
+    if (result.removedLetter) {
+      setSolveMessage(`Solved by removing "${result.removedLetter}"`);
+      // Clear after 4 seconds
+      solveTimeoutRef.current = setTimeout(() => {
+        setSolveMessage(null);
+      }, 4000);
+    }
+
+    // Animate letters one by one with staggered delay
     let currentState = clearedState;
     for (let i = 0; i < result.placements.length; i++) {
       const placement = result.placements[i];
       
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 80 + Math.random() * 40));
       
       currentState = placeLetter(currentState, placement.letterId, placement.row, placement.col);
       setGameState(currentState);
@@ -162,6 +173,8 @@ export default function Game() {
 
     setIsSolving(false);
 
+    // For 11-letter solutions, we won't trigger the win condition
+    // but the grid is still valid (just with one letter left in tray)
     if (currentState.isWon) {
       setIsTimerRunning(false);
     }
@@ -176,6 +189,7 @@ export default function Game() {
     setSelectedLetterId(null);
     setIsSolving(false);
     setSolveError(null);
+    setSolveMessage(null);
     setTimeout(() => {
       setGameState(createInitialState());
       setTimer(0);
@@ -359,6 +373,22 @@ export default function Game() {
                     >
                       {solveError}
                     </motion.span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Solve Message (11-letter solution) */}
+              <AnimatePresence>
+                {solveMessage && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                    className="mt-4 py-2 px-4 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 text-sm text-center"
+                  >
+                    <span className="mr-2">⚠️</span>
+                    {solveMessage}
+                    <span className="ml-2 text-amber-500/60">(11/12 letters used)</span>
                   </motion.div>
                 )}
               </AnimatePresence>
