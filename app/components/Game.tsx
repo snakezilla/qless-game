@@ -11,9 +11,22 @@ import {
   shuffleUnplacedLetters,
   solvePuzzle,
 } from '../lib/gameState';
+import {
+  GameStats,
+  loadStats,
+  trackGameStarted,
+  trackGameWon,
+  trackLetterPlaced,
+  trackHintUsed,
+  trackSolveUsed,
+  startSessionTimer,
+  endSession,
+} from '../lib/stats';
 import GameGrid from './GameGrid';
 import DiceTray from './DiceTray';
 import WinModal from './WinModal';
+import StatsModal from './StatsModal';
+import MilestoneToast from './MilestoneToast';
 
 export default function Game() {
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -25,10 +38,22 @@ export default function Game() {
   const [isSolving, setIsSolving] = useState(false);
   const [solveError, setSolveError] = useState<string | null>(null);
   const [solveMessage, setSolveMessage] = useState<string | null>(null);
+  const [autoSolved, setAutoSolved] = useState(false); // Track if puzzle was auto-solved
   const solveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Stats tracking
+  const [stats, setStats] = useState<GameStats | null>(null);
+  const [showStatsModal, setShowStatsModal] = useState(false);
+  const [currentMilestone, setCurrentMilestone] = useState<string | null>(null);
+  const [hintsUsedThisGame, setHintsUsedThisGame] = useState(false);
 
-  // Initialize game
+  // Initialize game and stats
   useEffect(() => {
+    // Load stats and start session timer
+    const initialStats = loadStats();
+    setStats(initialStats);
+    startSessionTimer();
+    
     const initGame = () => {
       setIsRolling(true);
       setTimeout(() => {
@@ -36,9 +61,22 @@ export default function Game() {
         setTimer(0);
         setIsTimerRunning(true);
         setIsRolling(false);
+        setHintsUsedThisGame(false);
+        
+        // Track game started
+        const { stats: updatedStats } = trackGameStarted();
+        setStats(updatedStats);
       }, 1500);
     };
     initGame();
+    
+    // Track session end on page unload
+    const handleUnload = () => endSession();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      endSession();
+    };
   }, []);
 
   // Timer
@@ -72,11 +110,21 @@ export default function Game() {
     const newState = placeLetter(gameState, draggingLetter.id, row, col);
     setGameState(newState);
     setDraggingLetter(null);
+    
+    // Track letter placement
+    const updatedStats = trackLetterPlaced();
+    setStats(updatedStats);
 
     if (newState.isWon) {
       setIsTimerRunning(false);
+      // Track win
+      const { stats: winStats, newMilestones } = trackGameWon(timer, hintsUsedThisGame);
+      setStats(winStats);
+      if (newMilestones.length > 0) {
+        setCurrentMilestone(newMilestones[0]);
+      }
     }
-  }, [gameState, draggingLetter]);
+  }, [gameState, draggingLetter, timer, hintsUsedThisGame]);
 
   // Click on a letter in the tray to select it
   const handleTrayLetterClick = useCallback((letter: Letter) => {
@@ -96,6 +144,7 @@ export default function Game() {
     const newState = removeLetter(gameState, letter.id);
     setGameState(newState);
     setSelectedLetterId(null);
+    setAutoSolved(false); // User is modifying the board, clear auto-solved state
   }, [gameState, isSolving]);
 
   // Click on an empty cell to place selected letter
@@ -105,16 +154,31 @@ export default function Game() {
     const newState = placeLetter(gameState, selectedLetterId, row, col);
     setGameState(newState);
     setSelectedLetterId(null);
+    
+    // Track letter placement
+    const updatedStats = trackLetterPlaced();
+    setStats(updatedStats);
 
     if (newState.isWon) {
       setIsTimerRunning(false);
+      // Track win
+      const { stats: winStats, newMilestones } = trackGameWon(timer, hintsUsedThisGame);
+      setStats(winStats);
+      if (newMilestones.length > 0) {
+        setCurrentMilestone(newMilestones[0]);
+      }
     }
-  }, [gameState, selectedLetterId, isSolving]);
+  }, [gameState, selectedLetterId, isSolving, timer, hintsUsedThisGame]);
 
   const handleShuffle = useCallback(() => {
     if (!gameState || isSolving) return;
     setGameState(shuffleUnplacedLetters(gameState));
     setSelectedLetterId(null);
+    setHintsUsedThisGame(true);
+    
+    // Track hint usage
+    const updatedStats = trackHintUsed();
+    setStats(updatedStats);
   }, [gameState, isSolving]);
 
   const handleSolve = useCallback(async () => {
@@ -124,6 +188,10 @@ export default function Game() {
     setSolveError(null);
     setSolveMessage(null);
     setSelectedLetterId(null);
+    
+    // Track solve button usage
+    const updatedStats = trackSolveUsed();
+    setStats(updatedStats);
 
     // Clear existing placements first
     let clearedState = gameState;
@@ -172,6 +240,7 @@ export default function Game() {
     }
 
     setIsSolving(false);
+    setAutoSolved(true); // Mark as auto-solved so modal doesn't block
 
     // For 11-letter solutions, we won't trigger the win condition
     // but the grid is still valid (just with one letter left in tray)
@@ -190,11 +259,17 @@ export default function Game() {
     setIsSolving(false);
     setSolveError(null);
     setSolveMessage(null);
+    setAutoSolved(false); // Reset auto-solved state
+    setHintsUsedThisGame(false); // Reset hints for new game
     setTimeout(() => {
       setGameState(createInitialState());
       setTimer(0);
       setIsTimerRunning(true);
       setIsRolling(false);
+      
+      // Track new game started
+      const { stats: updatedStats } = trackGameStarted();
+      setStats(updatedStats);
     }, 1500);
   }, []);
 
@@ -206,7 +281,9 @@ export default function Game() {
 
   const placedCount = gameState?.letters.filter((l) => l.position !== null).length || 0;
   const validWordCount = gameState?.words.filter((w) => w.isValid).length || 0;
+  const scrabbleValidCount = gameState?.words.filter((w) => w.isScrabbleValid).length || 0;
   const hasInvalidWords = gameState?.words.some((w) => !w.isValid) || false;
+  const hasNonScrabbleWords = gameState?.words.some((w) => w.isValid && !w.isScrabbleValid) || false;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-4">
@@ -247,12 +324,26 @@ export default function Game() {
               <p className="text-lg font-bold text-blue-400">{placedCount}/12</p>
               <p className="text-xs text-slate-500">Placed</p>
             </div>
-            <div className="text-center">
-              <p className={`text-lg font-bold ${hasInvalidWords ? 'text-red-400' : validWordCount > 0 ? 'text-green-400' : 'text-slate-500'}`}>
+            <div className="text-center" title={hasNonScrabbleWords ? 'Some words not in Scrabble dictionary' : ''}>
+              <p className={`text-lg font-bold ${
+                hasInvalidWords ? 'text-red-400' : 
+                hasNonScrabbleWords ? 'text-amber-400' :
+                validWordCount > 0 ? 'text-green-400' : 'text-slate-500'
+              }`}>
                 {validWordCount}
               </p>
               <p className="text-xs text-slate-500">Words</p>
             </div>
+            {/* Stats button */}
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowStatsModal(true)}
+              className="p-2 rounded-xl bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/30 transition-all"
+              title="View Stats"
+            >
+              <span className="text-lg">📊</span>
+            </motion.button>
           </div>
         </motion.div>
 
@@ -393,6 +484,21 @@ export default function Game() {
                 )}
               </AnimatePresence>
 
+              {/* Auto-solved indicator - shows user they can interact */}
+              <AnimatePresence>
+                {autoSolved && gameState.isWon && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                    className="mt-4 py-2 px-4 rounded-xl bg-green-500/20 border border-green-500/30 text-green-400 text-sm text-center"
+                  >
+                    <span className="mr-2">✨</span>
+                    Solution shown — click letters to experiment!
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Word feedback */}
               {gameState.words.length > 0 && (
                 <motion.div
@@ -400,20 +506,38 @@ export default function Game() {
                   animate={{ opacity: 1 }}
                   className="mt-4 flex flex-wrap gap-2 justify-center"
                 >
-                  {gameState.words.map((word, idx) => (
-                    <motion.span
-                      key={`${word.word}-${idx}`}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        word.isValid
-                          ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                          : 'bg-red-500/20 text-red-400 border border-red-500/30'
-                      }`}
-                    >
-                      {word.word} {word.isValid ? '✓' : '✗'}
-                    </motion.span>
-                  ))}
+                  {gameState.words.map((word, idx) => {
+                    // Three states: Scrabble-valid (green), ENABLE1-only (amber), Invalid (red)
+                    let colorClass = '';
+                    let icon = '';
+                    let title = '';
+                    
+                    if (!word.isValid) {
+                      colorClass = 'bg-red-500/20 text-red-400 border border-red-500/30';
+                      icon = '✗';
+                      title = 'Not a valid word';
+                    } else if (!word.isScrabbleValid) {
+                      colorClass = 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                      icon = '⚠';
+                      title = 'Valid, but not in Scrabble dictionary';
+                    } else {
+                      colorClass = 'bg-green-500/20 text-green-400 border border-green-500/30';
+                      icon = '✓';
+                      title = 'Valid Scrabble word';
+                    }
+                    
+                    return (
+                      <motion.span
+                        key={`${word.word}-${idx}`}
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={`px-3 py-1 rounded-full text-sm font-medium ${colorClass}`}
+                        title={title}
+                      >
+                        {word.word} {icon}
+                      </motion.span>
+                    );
+                  })}
                 </motion.div>
               )}
 
@@ -432,15 +556,30 @@ export default function Game() {
         </AnimatePresence>
       </div>
 
-      {/* Win Modal */}
+      {/* Win Modal - only show for manual wins, not auto-solved */}
       {gameState && (
         <WinModal
-          isOpen={gameState.isWon}
+          isOpen={gameState.isWon && !autoSolved}
           words={gameState.words}
           time={timer}
           onNewGame={handleNewGame}
         />
       )}
+      
+      {/* Stats Modal */}
+      {stats && (
+        <StatsModal
+          isOpen={showStatsModal}
+          onClose={() => setShowStatsModal(false)}
+          stats={stats}
+        />
+      )}
+      
+      {/* Milestone Toast */}
+      <MilestoneToast
+        milestoneId={currentMilestone}
+        onDismiss={() => setCurrentMilestone(null)}
+      />
 
       {/* Instructions */}
       <motion.div

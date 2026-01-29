@@ -1,5 +1,6 @@
 // Q-Less Game State Management
 import { isValidWord, VALID_WORDS } from './words';
+import { isScrabbleWord } from './scrabbleWords';
 
 export interface Letter {
   id: string;
@@ -17,6 +18,7 @@ export interface WordResult {
   word: string;
   positions: { row: number; col: number }[];
   isValid: boolean;
+  isScrabbleValid: boolean; // Additional check against official Scrabble dictionary
   direction: 'horizontal' | 'vertical';
 }
 
@@ -192,10 +194,12 @@ function findAllWords(grid: (Letter | null)[][]): WordResult[] {
         positions.push({ row, col });
       } else {
         if (currentWord.length >= 2) {
+          const valid = currentWord.length >= 3 && isValidWord(currentWord);
           words.push({
             word: currentWord,
             positions: [...positions],
-            isValid: currentWord.length >= 3 && isValidWord(currentWord),
+            isValid: valid,
+            isScrabbleValid: valid && isScrabbleWord(currentWord),
             direction: 'horizontal',
           });
         }
@@ -221,10 +225,12 @@ function findAllWords(grid: (Letter | null)[][]): WordResult[] {
         positions.push({ row, col });
       } else {
         if (currentWord.length >= 2) {
+          const valid = currentWord.length >= 3 && isValidWord(currentWord);
           words.push({
             word: currentWord,
             positions: [...positions],
-            isValid: currentWord.length >= 3 && isValidWord(currentWord),
+            isValid: valid,
+            isScrabbleValid: valid && isScrabbleWord(currentWord),
             direction: 'vertical',
           });
         }
