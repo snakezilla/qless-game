@@ -1,25 +1,12 @@
-// Q-Less Puzzle Solver - Optimized Constraint Satisfaction with Backtracking
-// This solver separates word SELECTION (exact cover) from PLACEMENT (crossword)
+// Q-Less Solver - Direct Backtracking Approach
+// 
+// Key insight: In crosswords, overlapping letters share ONE grid cell.
+// So we track REMAINING LETTERS as we place words, not exact cover.
 
-import { isValidWord, getWordsFromLetters } from './words';
+import { isValidWord, VALID_WORDS } from './words';
 import type { Letter } from './gameState';
 
 const GRID_SIZE = 8;
-const SOLVE_TIMEOUT_12 = 8000; // 8 seconds for 12-letter solve
-const SOLVE_TIMEOUT_11 = 4000; // 4 seconds per 11-letter attempt
-
-interface PlacedWord {
-  word: string;
-  row: number;
-  col: number;
-  direction: 'h' | 'v';
-}
-
-interface SolverState {
-  grid: (string | null)[][];
-  placedWords: PlacedWord[];
-  remainingLetters: Map<string, number>;
-}
 
 export interface SolveResult {
   placements: { letterId: string; row: number; col: number }[];
@@ -27,108 +14,39 @@ export interface SolveResult {
   removedLetter?: string;
 }
 
-// ============ PHASE 1: Find candidate words ============
+// ============ Word Generation ============
 
-function findCandidateWords(letterCounts: Map<string, number>): string[] {
-  const candidates = getWordsFromLetters(letterCounts);
+function generateCandidateWords(letterCounts: Map<string, number>): string[] {
+  const candidates: string[] = [];
   
-  // Sort by length descending (longer words = more constraining = better for search)
-  // Secondary sort by letter diversity (words using more unique letters first)
-  candidates.sort((a, b) => {
-    if (b.length !== a.length) return b.length - a.length;
-    const uniqueA = new Set(a).size;
-    const uniqueB = new Set(b).size;
-    return uniqueB - uniqueA;
-  });
+  for (const word of VALID_WORDS) {
+    if (word.length < 3 || word.length > 12) continue;
+    
+    const wordCounts = new Map<string, number>();
+    for (const c of word) {
+      wordCounts.set(c, (wordCounts.get(c) || 0) + 1);
+    }
+    
+    let canForm = true;
+    for (const [char, count] of wordCounts) {
+      if ((letterCounts.get(char) || 0) < count) {
+        canForm = false;
+        break;
+      }
+    }
+    
+    if (canForm) candidates.push(word);
+  }
   
+  // Sort by length descending
+  candidates.sort((a, b) => b.length - a.length);
   return candidates;
 }
 
-// ============ PHASE 2: Exact Cover Search ============
+// ============ Grid Validation ============
 
-function subtractWord(remaining: Map<string, number>, word: string): Map<string, number> {
-  const newRemaining = new Map(remaining);
-  for (const c of word) {
-    const count = newRemaining.get(c) || 0;
-    if (count <= 1) {
-      newRemaining.delete(c);
-    } else {
-      newRemaining.set(c, count - 1);
-    }
-  }
-  return newRemaining;
-}
-
-function canFormWord(word: string, available: Map<string, number>): boolean {
-  const needed = new Map<string, number>();
-  for (const c of word) {
-    needed.set(c, (needed.get(c) || 0) + 1);
-  }
-  for (const [char, count] of needed) {
-    if ((available.get(char) || 0) < count) return false;
-  }
-  return true;
-}
-
-function totalLetters(counts: Map<string, number>): number {
-  let total = 0;
-  for (const c of counts.values()) total += c;
-  return total;
-}
-
-// Find any word that can be formed from remaining letters
-function canFormAnyWord(remaining: Map<string, number>, candidates: string[]): boolean {
-  if (remaining.size === 0) return true;
-  for (const word of candidates) {
-    if (canFormWord(word, remaining)) return true;
-  }
-  return false;
-}
-
-// Try to find exact cover (set of words using all letters exactly once)
-function findExactCover(
-  remaining: Map<string, number>,
-  candidates: string[],
-  currentWords: string[],
-  deadline: number
-): string[] | null {
-  if (Date.now() > deadline) return null;
-  
-  // Success: used all letters
-  if (remaining.size === 0) {
-    return currentWords;
-  }
-  
-  // Pruning: if no word can be formed, backtrack
-  const validCandidates = candidates.filter(w => canFormWord(w, remaining));
-  if (validCandidates.length === 0) return null;
-  
-  // Try each candidate word
-  for (const word of validCandidates.slice(0, 200)) { // Limit branching
-    const newRemaining = subtractWord(remaining, word);
-    
-    // Pruning: check if remaining can form at least one more word (unless empty)
-    if (newRemaining.size > 0 && !canFormAnyWord(newRemaining, validCandidates)) {
-      continue;
-    }
-    
-    const result = findExactCover(
-      newRemaining,
-      validCandidates,
-      [...currentWords, word],
-      deadline
-    );
-    
-    if (result) return result;
-  }
-  
-  return null;
-}
-
-// ============ PHASE 3: Crossword Placement ============
-
-function validateAllGridWords(grid: (string | null)[][]): boolean {
-  // Check horizontal
+function validateGrid(grid: (string | null)[][]): boolean {
+  // Horizontal
   for (let row = 0; row < GRID_SIZE; row++) {
     let word = '';
     for (let col = 0; col <= GRID_SIZE; col++) {
@@ -143,7 +61,7 @@ function validateAllGridWords(grid: (string | null)[][]): boolean {
     }
   }
   
-  // Check vertical
+  // Vertical
   for (let col = 0; col < GRID_SIZE; col++) {
     let word = '';
     for (let row = 0; row <= GRID_SIZE; row++) {
@@ -161,97 +79,112 @@ function validateAllGridWords(grid: (string | null)[][]): boolean {
   return true;
 }
 
+// ============ Word Placement ============
+
+interface PlacementResult {
+  grid: (string | null)[][];
+  usedLetters: string[]; // New letters consumed (not counting overlaps)
+}
+
 function tryPlaceWord(
   grid: (string | null)[][],
   word: string,
   startRow: number,
   startCol: number,
-  direction: 'h' | 'v'
-): (string | null)[][] | null {
+  dir: 'h' | 'v',
+  availableLetters: Map<string, number>
+): PlacementResult | null {
   const newGrid = grid.map(r => [...r]);
+  const usedLetters: string[] = [];
+  const tempAvailable = new Map(availableLetters);
   
-  // Check bounds
-  if (direction === 'h') {
+  // Bounds check
+  if (dir === 'h') {
     if (startCol < 0 || startCol + word.length > GRID_SIZE) return null;
     if (startRow < 0 || startRow >= GRID_SIZE) return null;
-  } else {
-    if (startRow < 0 || startRow + word.length > GRID_SIZE) return null;
-    if (startCol < 0 || startCol >= GRID_SIZE) return null;
-  }
-  
-  // Check for letters before/after the word (would create invalid extension)
-  if (direction === 'h') {
     if (startCol > 0 && grid[startRow][startCol - 1]) return null;
     if (startCol + word.length < GRID_SIZE && grid[startRow][startCol + word.length]) return null;
   } else {
+    if (startRow < 0 || startRow + word.length > GRID_SIZE) return null;
+    if (startCol < 0 || startCol >= GRID_SIZE) return null;
     if (startRow > 0 && grid[startRow - 1][startCol]) return null;
     if (startRow + word.length < GRID_SIZE && grid[startRow + word.length][startCol]) return null;
   }
   
-  let hasIntersection = false;
+  let hasOverlap = false;
   
-  // Place each letter
   for (let i = 0; i < word.length; i++) {
-    const row = direction === 'h' ? startRow : startRow + i;
-    const col = direction === 'h' ? startCol + i : startCol;
+    const row = dir === 'h' ? startRow : startRow + i;
+    const col = dir === 'h' ? startCol + i : startCol;
+    const char = word[i];
     const existing = grid[row][col];
     
     if (existing) {
-      if (existing !== word[i]) return null;
-      hasIntersection = true;
+      if (existing !== char) return null; // Conflict
+      hasOverlap = true;
+      // Overlap: this letter is already on grid, don't consume from pool
     } else {
-      newGrid[row][col] = word[i];
+      // Need to consume letter from pool
+      const count = tempAvailable.get(char) || 0;
+      if (count === 0) return null; // Don't have this letter
+      if (count === 1) {
+        tempAvailable.delete(char);
+      } else {
+        tempAvailable.set(char, count - 1);
+      }
+      usedLetters.push(char);
+      newGrid[row][col] = char;
     }
   }
   
-  // For non-first word, must have at least one intersection
-  const gridHasLetters = grid.some(row => row.some(cell => cell !== null));
-  if (gridHasLetters && !hasIntersection) return null;
+  // Non-first word must overlap
+  const gridHasLetters = grid.some(r => r.some(c => c !== null));
+  if (gridHasLetters && !hasOverlap) return null;
   
-  // Validate all words on grid
-  if (!validateAllGridWords(newGrid)) return null;
+  // Validate grid
+  if (!validateGrid(newGrid)) return null;
   
-  return newGrid;
+  return { grid: newGrid, usedLetters };
 }
 
 function findPlacementPositions(
   grid: (string | null)[][],
   word: string
-): { row: number; col: number; direction: 'h' | 'v' }[] {
-  const positions: { row: number; col: number; direction: 'h' | 'v' }[] = [];
+): { row: number; col: number; dir: 'h' | 'v' }[] {
+  const positions: { row: number; col: number; dir: 'h' | 'v' }[] = [];
   const seen = new Set<string>();
   
-  // If grid is empty, place at center
-  const hasLetters = grid.some(row => row.some(cell => cell !== null));
+  const hasLetters = grid.some(r => r.some(c => c !== null));
   if (!hasLetters) {
-    const startCol = Math.floor((GRID_SIZE - word.length) / 2);
-    const startRow = Math.floor(GRID_SIZE / 2);
-    return [{ row: startRow, col: startCol, direction: 'h' }];
+    // Empty grid: center positions
+    const hCol = Math.floor((GRID_SIZE - word.length) / 2);
+    const vRow = Math.floor((GRID_SIZE - word.length) / 2);
+    return [
+      { row: 3, col: hCol, dir: 'h' },
+      { row: vRow, col: 3, dir: 'v' }
+    ];
   }
   
-  // Find cells with letters and try to intersect
+  // Find intersection points
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
       const cell = grid[row][col];
       if (!cell) continue;
       
-      // Find this letter in the word
       for (let i = 0; i < word.length; i++) {
         if (word[i] === cell) {
-          // Horizontal placement
-          const hStart = col - i;
-          const hKey = `h:${row}:${hStart}`;
+          const hCol = col - i;
+          const hKey = `h:${row}:${hCol}`;
           if (!seen.has(hKey)) {
             seen.add(hKey);
-            positions.push({ row, col: hStart, direction: 'h' });
+            positions.push({ row, col: hCol, dir: 'h' });
           }
           
-          // Vertical placement
-          const vStart = row - i;
-          const vKey = `v:${vStart}:${col}`;
+          const vRow = row - i;
+          const vKey = `v:${vRow}:${col}`;
           if (!seen.has(vKey)) {
             seen.add(vKey);
-            positions.push({ row: vStart, col, direction: 'v' });
+            positions.push({ row: vRow, col, dir: 'v' });
           }
         }
       }
@@ -261,78 +194,103 @@ function findPlacementPositions(
   return positions;
 }
 
-function placeWords(
-  words: string[],
+// ============ Main Backtracking Solver ============
+
+let attempts = 0;
+
+function countRemaining(remaining: Map<string, number>): number {
+  let total = 0;
+  for (const count of remaining.values()) total += count;
+  return total;
+}
+
+function solve(
+  grid: (string | null)[][],
+  remaining: Map<string, number>,
+  candidates: string[],
   deadline: number
 ): (string | null)[][] | null {
-  if (words.length === 0) return null;
+  attempts++;
+  
   if (Date.now() > deadline) return null;
   
-  // Sort words by length (longer first for more constraints)
-  const sortedWords = [...words].sort((a, b) => b.length - a.length);
+  // Success: all letters placed
+  if (countRemaining(remaining) === 0) {
+    return grid;
+  }
   
-  function backtrack(
-    wordIdx: number,
-    grid: (string | null)[][]
-  ): (string | null)[][] | null {
-    if (Date.now() > deadline) return null;
-    if (wordIdx >= sortedWords.length) return grid;
-    
-    const word = sortedWords[wordIdx];
-    const positions = findPlacementPositions(grid, word);
-    
-    for (const { row, col, direction } of positions) {
-      const newGrid = tryPlaceWord(grid, word, row, col, direction);
-      if (newGrid) {
-        const result = backtrack(wordIdx + 1, newGrid);
-        if (result) return result;
-      }
+  // Filter candidates we can still form
+  const viable = candidates.filter(word => {
+    const counts = new Map<string, number>();
+    for (const c of word) {
+      counts.set(c, (counts.get(c) || 0) + 1);
     }
-    
+    for (const [char, count] of counts) {
+      if ((remaining.get(char) || 0) < count) return false;
+    }
+    return true;
+  });
+  
+  // Prune if no viable words
+  if (viable.length === 0 && countRemaining(remaining) > 0) {
     return null;
   }
   
-  const emptyGrid = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
-  return backtrack(0, emptyGrid);
+  // Try placing each viable word
+  for (const word of viable.slice(0, 100)) {
+    const positions = findPlacementPositions(grid, word);
+    
+    // Shuffle for variety
+    for (let i = positions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [positions[i], positions[j]] = [positions[j], positions[i]];
+    }
+    
+    for (const { row, col, dir } of positions.slice(0, 30)) {
+      const result = tryPlaceWord(grid, word, row, col, dir, remaining);
+      
+      if (result && result.usedLetters.length > 0) {
+        // Update remaining letters
+        const newRemaining = new Map(remaining);
+        for (const char of result.usedLetters) {
+          const count = newRemaining.get(char) || 0;
+          if (count <= 1) {
+            newRemaining.delete(char);
+          } else {
+            newRemaining.set(char, count - 1);
+          }
+        }
+        
+        const solution = solve(result.grid, newRemaining, candidates, deadline);
+        if (solution) return solution;
+      }
+    }
+  }
+  
+  return null;
 }
 
-// ============ PHASE 4: Combined Solver ============
+// ============ Entry Point ============
 
 function solveWithLetters(
   letterCounts: Map<string, number>,
   targetCount: number,
   timeoutMs: number
 ): (string | null)[][] | null {
-  const deadline = Date.now() + timeoutMs;
-  
-  // Phase 1: Find candidate words
-  const candidates = findCandidateWords(letterCounts);
-  console.log(`[Solver] Found ${candidates.length} candidate words`);
+  const candidates = generateCandidateWords(letterCounts);
+  console.log(`[Solver] ${candidates.length} candidate words`);
   
   if (candidates.length === 0) return null;
   
-  // Phase 2: Find exact cover (which words to use)
-  const coverDeadline = Date.now() + Math.floor(timeoutMs * 0.6);
-  const wordSet = findExactCover(letterCounts, candidates, [], coverDeadline);
+  const emptyGrid: (string | null)[][] = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(null));
   
-  if (!wordSet) {
-    console.log('[Solver] No exact cover found');
-    return null;
-  }
+  attempts = 0;
+  const deadline = Date.now() + timeoutMs;
   
-  console.log(`[Solver] Found word set: ${wordSet.join(', ')}`);
+  const result = solve(emptyGrid, letterCounts, candidates, deadline);
   
-  // Phase 3: Place words on grid
-  const placementDeadline = Date.now() + Math.floor(timeoutMs * 0.4);
-  const grid = placeWords(wordSet, placementDeadline);
-  
-  if (!grid) {
-    console.log('[Solver] Could not place words on grid');
-    // Try with a different word set by recursing
-    return null;
-  }
-  
-  return grid;
+  console.log(`[Solver] ${attempts} attempts`);
+  return result;
 }
 
 function gridToPlacements(
@@ -340,17 +298,17 @@ function gridToPlacements(
   letters: Letter[]
 ): { letterId: string; row: number; col: number }[] {
   const placements: { letterId: string; row: number; col: number }[] = [];
-  const usedLetterIds = new Set<string>();
+  const usedIds = new Set<string>();
   
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
       const char = grid[row][col];
       if (char) {
         const letter = letters.find(
-          l => l.char.toLowerCase() === char && !usedLetterIds.has(l.id)
+          l => l.char.toLowerCase() === char.toLowerCase() && !usedIds.has(l.id)
         );
         if (letter) {
-          usedLetterIds.add(letter.id);
+          usedIds.add(letter.id);
           placements.push({ letterId: letter.id, row, col });
         }
       }
@@ -360,70 +318,73 @@ function gridToPlacements(
   return placements;
 }
 
-// ============ Main Entry Point ============
+function countGridCells(grid: (string | null)[][]): number {
+  let count = 0;
+  for (const row of grid) {
+    for (const cell of row) {
+      if (cell) count++;
+    }
+  }
+  return count;
+}
 
 export function solvePuzzle(letters: Letter[]): SolveResult {
   const letterChars = letters.map(l => l.char.toLowerCase());
   
-  // Build letter counts
   const letterCounts = new Map<string, number>();
   for (const c of letterChars) {
     letterCounts.set(c, (letterCounts.get(c) || 0) + 1);
   }
   
-  console.log(`[Solver] Solving with letters: ${letterChars.join('').toUpperCase()}`);
+  console.log(`[Solver] Letters: ${letterChars.join('').toUpperCase()}`);
   
-  // Phase 1: Try with all 12 letters
-  console.log('[Solver] Phase 1: Trying all 12 letters...');
-  const grid12 = solveWithLetters(letterCounts, 12, SOLVE_TIMEOUT_12);
+  // Phase 1: All 12 letters
+  console.log('[Solver] Phase 1: 12-letter solution...');
+  const grid12 = solveWithLetters(letterCounts, 12, 8000);
   
   if (grid12) {
-    console.log('[Solver] Found 12-letter solution!');
-    const placements = gridToPlacements(grid12, letters);
-    return {
-      placements,
-      success: placements.length === 12
-    };
+    const cells = countGridCells(grid12);
+    console.log(`[Solver] Grid has ${cells} cells`);
+    
+    if (cells === 12) {
+      const placements = gridToPlacements(grid12, letters);
+      console.log(`[Solver] ✓ 12-letter solution! (${placements.length} placements)`);
+      return { placements, success: true };
+    }
   }
   
-  // Phase 2: Try with 11 letters (remove one at a time)
-  console.log('[Solver] Phase 2: Trying 11-letter solutions...');
+  // Phase 2: 11 letters
+  console.log('[Solver] Phase 2: 11-letter solutions...');
   
   const uniqueLetters = [...new Set(letterChars)];
   
-  for (const letterToRemove of uniqueLetters) {
-    // Create counts with one less of this letter
-    const reducedCounts = new Map(letterCounts);
-    const currentCount = reducedCounts.get(letterToRemove) || 0;
-    if (currentCount <= 1) {
-      reducedCounts.delete(letterToRemove);
+  for (const toRemove of uniqueLetters) {
+    const reduced = new Map(letterCounts);
+    const count = reduced.get(toRemove) || 0;
+    if (count <= 1) {
+      reduced.delete(toRemove);
     } else {
-      reducedCounts.set(letterToRemove, currentCount - 1);
+      reduced.set(toRemove, count - 1);
     }
     
-    console.log(`[Solver] Trying without one '${letterToRemove.toUpperCase()}'...`);
+    console.log(`[Solver] Trying without '${toRemove.toUpperCase()}'...`);
     
-    const grid11 = solveWithLetters(reducedCounts, 11, SOLVE_TIMEOUT_11);
+    const grid11 = solveWithLetters(reduced, 11, 3000);
     
     if (grid11) {
-      console.log(`[Solver] Found solution by removing '${letterToRemove.toUpperCase()}'!`);
-      
-      // Find which letter instance to exclude
-      const lettersToUse = [...letters];
-      const removeIdx = lettersToUse.findIndex(l => l.char.toLowerCase() === letterToRemove);
-      if (removeIdx !== -1) {
-        lettersToUse.splice(removeIdx, 1);
+      const cells = countGridCells(grid11);
+      if (cells === 11) {
+        const placements = gridToPlacements(grid11, letters);
+        console.log(`[Solver] ✓ 11-letter solution (removed ${toRemove.toUpperCase()})`);
+        return { 
+          placements, 
+          success: true, 
+          removedLetter: toRemove.toUpperCase() 
+        };
       }
-      
-      const placements = gridToPlacements(grid11, letters);
-      return {
-        placements,
-        success: placements.length === 11,
-        removedLetter: letterToRemove.toUpperCase()
-      };
     }
   }
   
-  console.log('[Solver] No solution found');
+  console.log('[Solver] ✗ No solution found');
   return { placements: [], success: false };
 }
