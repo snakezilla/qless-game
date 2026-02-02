@@ -1,5 +1,5 @@
 // Q-Less Game State Management
-import { isValidWord, VALID_WORDS } from './words';
+import { isValidWord } from './words';
 import { isScrabbleWord } from './scrabbleWords';
 
 export interface Letter {
