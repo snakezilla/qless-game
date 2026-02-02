@@ -30,21 +30,21 @@ export interface GameState {
   words: WordResult[];
 }
 
-// Dice faces - no Q, weighted for playability
+// Official Q-Less dice faces (from physical game)
 // Each die has 6 faces, we pick one face per die
 const DICE_FACES = [
-  ['A', 'A', 'E', 'I', 'O', 'U'], // Vowel dice
-  ['A', 'E', 'I', 'O', 'U', 'Y'],
-  ['A', 'E', 'I', 'O', 'N', 'R'],
-  ['B', 'C', 'D', 'F', 'G', 'H'],
-  ['J', 'K', 'L', 'M', 'N', 'P'],
-  ['R', 'S', 'T', 'W', 'X', 'Z'],
-  ['B', 'C', 'D', 'G', 'P', 'T'],
-  ['L', 'M', 'N', 'R', 'S', 'T'],
-  ['D', 'H', 'L', 'N', 'R', 'S'],
-  ['C', 'F', 'H', 'K', 'P', 'W'],
-  ['G', 'K', 'L', 'M', 'N', 'V'],
-  ['B', 'F', 'G', 'J', 'K', 'V'],
+  ['C', 'B', 'J', 'D', 'C', 'T'],  // Die 1
+  ['D', 'R', 'R', 'L', 'G', 'G'],  // Die 2
+  ['O', 'A', 'A', 'O', 'E', 'E'],  // Die 3 (vowel die)
+  ['Y', 'I', 'I', 'O', 'N', 'N'],  // Die 4 (vowel die)
+  ['N', 'H', 'H', 'N', 'R', 'R'],  // Die 5
+  ['M', 'L', 'B', 'M', 'Y', 'L'],  // Die 6
+  ['W', 'T', 'T', 'H', 'H', 'P'],  // Die 7
+  ['P', 'F', 'P', 'K', 'V', 'G'],  // Die 8
+  ['E', 'U', 'I', 'A', 'O', 'U'],  // Die 9 (vowel die)
+  ['K', 'B', 'S', 'X', 'N', 'Z'],  // Die 10
+  ['F', 'L', 'L', 'W', 'D', 'R'],  // Die 11
+  ['M', 'T', 'S', 'C', 'T', 'C'],  // Die 12
 ];
 
 function rollDice(): string[] {
