@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import ServiceWorkerRegistration from './components/ServiceWorkerRegistration';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -17,6 +18,12 @@ export const metadata: Metadata = {
   description: 'Arrange 12 dice letters into interconnected words. A beautiful word puzzle game.',
   keywords: ['q-less', 'word game', 'puzzle', 'crossword', 'solitaire', 'dice'],
   authors: [{ name: 'Clawdbot' }],
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Q-Less',
+  },
   openGraph: {
     title: 'Q-Less | Crossword Solitaire',
     description: 'Arrange 12 dice letters into interconnected words',
@@ -38,10 +45,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );
