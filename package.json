@@ -6,9 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cap:sync": "npm run build && npx cap sync",
+    "cap:open:ios": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/ios": "^8.0.2",
     "@herbcaudill/scrabble-words": "^1.0.2",
     "canvas-confetti": "^1.9.4",
     "framer-motion": "^12.29.2",
