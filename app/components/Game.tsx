@@ -27,11 +27,15 @@ import DiceTray from './DiceTray';
 import WinModal from './WinModal';
 import StatsModal from './StatsModal';
 import MilestoneToast from './MilestoneToast';
+import IntroModal from './IntroModal';
 
 export default function Game() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [draggingLetter, setDraggingLetter] = useState<Letter | null>(null);
   const [selectedLetterId, setSelectedLetterId] = useState<string | null>(null);
+  const [movingLetterId, setMovingLetterId] = useState<string | null>(null);
+  const [lastTapTime, setLastTapTime] = useState<{ [key: string]: number }>({});
+  const [introComplete, setIntroComplete] = useState(false);
   const [isRolling, setIsRolling] = useState(true);
   const [timer, setTimer] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
@@ -126,35 +130,171 @@ export default function Game() {
     }
   }, [gameState, draggingLetter, timer, hintsUsedThisGame]);
 
-  // Click on a letter in the tray to select it
-  const handleTrayLetterClick = useCallback((letter: Letter) => {
-    if (isSolving) return;
-    
-    // Toggle selection
-    if (selectedLetterId === letter.id) {
-      setSelectedLetterId(null);
-    } else {
-      setSelectedLetterId(letter.id);
-    }
-  }, [selectedLetterId, isSolving]);
+  // Find a good position to auto-place a letter
+  const findBestPlacement = useCallback((state: GameState): { row: number; col: number } | null => {
+    const grid = state.grid;
+    const GRID_SIZE = 8;
 
-  // Click on a placed letter to remove it
-  const handlePlacedLetterClick = useCallback((letter: Letter) => {
-    if (!gameState || !letter.position || isSolving) return;
-    const newState = removeLetter(gameState, letter.id);
+    // Find all placed letters
+    const placedPositions: { row: number; col: number }[] = [];
+    for (let r = 0; r < GRID_SIZE; r++) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        if (grid[r][c]) {
+          placedPositions.push({ row: r, col: c });
+        }
+      }
+    }
+
+    // If no letters placed, start near center
+    if (placedPositions.length === 0) {
+      return { row: 3, col: 3 };
+    }
+
+    // Find adjacent empty cells to existing letters (prefer horizontal/vertical neighbors)
+    const adjacentCells: { row: number; col: number; priority: number }[] = [];
+    const directions = [
+      { dr: 0, dc: 1, priority: 1 },  // right (prefer horizontal)
+      { dr: 0, dc: -1, priority: 1 }, // left
+      { dr: 1, dc: 0, priority: 2 },  // down
+      { dr: -1, dc: 0, priority: 2 }, // up
+    ];
+
+    for (const pos of placedPositions) {
+      for (const dir of directions) {
+        const newRow = pos.row + dir.dr;
+        const newCol = pos.col + dir.dc;
+        if (
+          newRow >= 0 && newRow < GRID_SIZE &&
+          newCol >= 0 && newCol < GRID_SIZE &&
+          !grid[newRow][newCol]
+        ) {
+          // Check if we already have this cell
+          if (!adjacentCells.some(c => c.row === newRow && c.col === newCol)) {
+            adjacentCells.push({ row: newRow, col: newCol, priority: dir.priority });
+          }
+        }
+      }
+    }
+
+    if (adjacentCells.length > 0) {
+      // Sort by priority (lower is better) and return first
+      adjacentCells.sort((a, b) => a.priority - b.priority);
+      return { row: adjacentCells[0].row, col: adjacentCells[0].col };
+    }
+
+    // Fallback: find any empty cell
+    for (let r = 0; r < GRID_SIZE; r++) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        if (!grid[r][c]) {
+          return { row: r, col: c };
+        }
+      }
+    }
+
+    return null;
+  }, []);
+
+  // Click on a letter in the tray to auto-place it
+  const handleTrayLetterClick = useCallback((letter: Letter) => {
+    if (isSolving || !gameState) return;
+
+    // Find best position and place immediately
+    const position = findBestPlacement(gameState);
+    if (!position) return;
+
+    const newState = placeLetter(gameState, letter.id, position.row, position.col);
     setGameState(newState);
     setSelectedLetterId(null);
-    setAutoSolved(false); // User is modifying the board, clear auto-solved state
-  }, [gameState, isSolving]);
+    setMovingLetterId(null);
 
-  // Click on an empty cell to place selected letter
+    // Track letter placement
+    const updatedStats = trackLetterPlaced();
+    setStats(updatedStats);
+
+    if (newState.isWon) {
+      setIsTimerRunning(false);
+      const { stats: winStats, newMilestones } = trackGameWon(timer, hintsUsedThisGame);
+      setStats(winStats);
+      if (newMilestones.length > 0) {
+        setCurrentMilestone(newMilestones[0]);
+      }
+    }
+  }, [gameState, isSolving, findBestPlacement, timer, hintsUsedThisGame]);
+
+  // Click on a placed letter - single tap removes, double tap picks up for moving
+  const handlePlacedLetterClick = useCallback((letter: Letter) => {
+    if (!gameState || !letter.position || isSolving) return;
+
+    const now = Date.now();
+    const lastTap = lastTapTime[letter.id] || 0;
+    const isDoubleTap = now - lastTap < 300;
+
+    setLastTapTime(prev => ({ ...prev, [letter.id]: now }));
+
+    if (isDoubleTap) {
+      // Double tap: pick up letter for moving (keep on grid but mark as selected for move)
+      setMovingLetterId(letter.id);
+      setSelectedLetterId(null);
+      setAutoSolved(false);
+    } else {
+      // Single tap: check if we're in moving mode
+      if (movingLetterId) {
+        // We have a letter being moved - swap positions or place adjacent
+        const movingLetter = gameState.letters.find(l => l.id === movingLetterId);
+        if (movingLetter && movingLetter.position) {
+          // Swap the two letters
+          let newState = removeLetter(gameState, movingLetterId);
+          newState = removeLetter(newState, letter.id);
+          newState = placeLetter(newState, letter.id, movingLetter.position.row, movingLetter.position.col);
+          newState = placeLetter(newState, movingLetterId, letter.position.row, letter.position.col);
+          setGameState(newState);
+          setMovingLetterId(null);
+          setAutoSolved(false);
+        }
+      } else {
+        // Not moving, just remove the letter
+        const newState = removeLetter(gameState, letter.id);
+        setGameState(newState);
+        setSelectedLetterId(null);
+        setAutoSolved(false);
+      }
+    }
+  }, [gameState, isSolving, lastTapTime, movingLetterId]);
+
+  // Click on an empty cell to place selected or moving letter
   const handleCellClick = useCallback((row: number, col: number) => {
-    if (!gameState || !selectedLetterId || isSolving) return;
+    if (!gameState || isSolving) return;
+
+    // Check if we're moving a placed letter
+    if (movingLetterId) {
+      const movingLetter = gameState.letters.find(l => l.id === movingLetterId);
+      if (movingLetter && movingLetter.position) {
+        // Remove from old position and place at new position
+        let newState = removeLetter(gameState, movingLetterId);
+        newState = placeLetter(newState, movingLetterId, row, col);
+        setGameState(newState);
+        setMovingLetterId(null);
+        setAutoSolved(false);
+
+        if (newState.isWon) {
+          setIsTimerRunning(false);
+          const { stats: winStats, newMilestones } = trackGameWon(timer, hintsUsedThisGame);
+          setStats(winStats);
+          if (newMilestones.length > 0) {
+            setCurrentMilestone(newMilestones[0]);
+          }
+        }
+      }
+      return;
+    }
+
+    // Otherwise, place selected letter from tray
+    if (!selectedLetterId) return;
 
     const newState = placeLetter(gameState, selectedLetterId, row, col);
     setGameState(newState);
     setSelectedLetterId(null);
-    
+
     // Track letter placement
     const updatedStats = trackLetterPlaced();
     setStats(updatedStats);
@@ -168,7 +308,7 @@ export default function Game() {
         setCurrentMilestone(newMilestones[0]);
       }
     }
-  }, [gameState, selectedLetterId, isSolving, timer, hintsUsedThisGame]);
+  }, [gameState, selectedLetterId, movingLetterId, isSolving, timer, hintsUsedThisGame]);
 
   const handleShuffle = useCallback(() => {
     if (!gameState || isSolving) return;
@@ -392,6 +532,7 @@ export default function Game() {
                   onCellClick={handleCellClick}
                   draggingLetter={draggingLetter}
                   selectedLetterId={selectedLetterId}
+                  movingLetterId={movingLetterId}
                 />
               </div>
 
@@ -407,46 +548,57 @@ export default function Game() {
                 />
               </div>
 
-              {/* Control buttons */}
+              {/* Control buttons - clean layout */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
-                className="flex gap-3"
+                className="space-y-3"
               >
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleShuffle}
-                  disabled={isSolving}
-                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <span>🔀</span> Shuffle
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleSolve}
-                  disabled={isSolving}
-                  className="py-3 px-4 rounded-xl font-medium text-slate-300 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/30 hover:border-purple-500/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <motion.span
-                    animate={isSolving ? { rotate: 360 } : { rotate: 0 }}
-                    transition={{ duration: 1, repeat: isSolving ? Infinity : 0, ease: 'linear' }}
-                  >
-                    ✨
-                  </motion.span>
-                  {isSolving ? 'Solving...' : 'Solve'}
-                </motion.button>
+                {/* Primary action */}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleNewGame}
                   disabled={isSolving}
-                  className="flex-1 py-3 px-4 rounded-xl font-medium text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full py-4 px-6 rounded-2xl font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed text-lg"
                 >
-                  <span>🎲</span> New Game
+                  <span className="text-xl">🎲</span> New Game
                 </motion.button>
+
+                {/* Secondary actions */}
+                <div className="flex gap-3">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleShuffle}
+                    disabled={isSolving}
+                    className="flex-1 py-3 px-4 rounded-xl font-medium text-slate-200 bg-slate-700/60 hover:bg-slate-600/60 border border-slate-600/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <motion.span
+                      whileHover={{ rotate: [0, -10, 10, -10, 10, 0] }}
+                      transition={{ duration: 0.5 }}
+                    >
+                      🎰
+                    </motion.span>
+                    Shake
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSolve}
+                    disabled={isSolving}
+                    className="flex-1 py-3 px-4 rounded-xl font-medium text-slate-300 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-600/30 hover:border-purple-500/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <motion.span
+                      animate={isSolving ? { rotate: 360 } : { rotate: 0 }}
+                      transition={{ duration: 1, repeat: isSolving ? Infinity : 0, ease: 'linear' }}
+                    >
+                      ✨
+                    </motion.span>
+                    {isSolving ? 'Solving...' : 'Show Me'}
+                  </motion.button>
+                </div>
               </motion.div>
 
               {/* Solve Error Toast */}
@@ -581,15 +733,18 @@ export default function Game() {
         onDismiss={() => setCurrentMilestone(null)}
       />
 
-      {/* Instructions */}
+      {/* Instructions - updated */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1 }}
         className="fixed bottom-4 left-4 right-4 text-center text-slate-500 text-xs"
       >
-        Drag or click letters to place • Click placed letters to remove • All words must be 3+ letters
+        Tap letters to place • Tap placed letters to remove • Double-tap to move
       </motion.div>
+
+      {/* Intro Modal for first-time users */}
+      <IntroModal onComplete={() => setIntroComplete(true)} />
     </div>
   );
 }

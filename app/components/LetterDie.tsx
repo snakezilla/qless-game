@@ -8,6 +8,7 @@ interface LetterDieProps {
   isPlaced: boolean;
   isDragging: boolean;
   isSelected?: boolean;
+  isMoving?: boolean;
   onDragStart: (e: React.DragEvent, letter: Letter) => void;
   onDragEnd: () => void;
   onClick?: () => void;
@@ -20,6 +21,7 @@ export default function LetterDie({
   isPlaced,
   isDragging,
   isSelected,
+  isMoving,
   onDragStart,
   onDragEnd,
   onClick,
@@ -27,6 +29,9 @@ export default function LetterDie({
   isPartOfValidWord,
 }: LetterDieProps) {
   const getGlowStyle = () => {
+    if (isMoving) {
+      return '0 0 20px rgba(251, 191, 36, 0.8), 0 0 40px rgba(251, 191, 36, 0.5), 0 0 60px rgba(245, 158, 11, 0.3)';
+    }
     if (isSelected) {
       return '0 0 20px rgba(147, 51, 234, 0.7), 0 0 40px rgba(147, 51, 234, 0.4), 0 0 60px rgba(59, 130, 246, 0.3)';
     }
@@ -47,17 +52,17 @@ export default function LetterDie({
       onClick={onClick}
       initial={isPlaced ? { scale: 0.8, opacity: 0 } : { scale: 1 }}
       animate={{
-        scale: isDragging ? 1.1 : isSelected ? 1.08 : 1,
+        scale: isDragging ? 1.1 : isMoving ? 1.12 : isSelected ? 1.08 : 1,
         opacity: 1,
         rotateY: 0,
-        y: isSelected ? -4 : 0,
+        y: isMoving ? -6 : isSelected ? -4 : 0,
       }}
-      whileHover={{ scale: isSelected ? 1.08 : 1.05, y: isSelected ? -4 : -2 }}
+      whileHover={{ scale: isMoving ? 1.12 : isSelected ? 1.08 : 1.05, y: isMoving ? -6 : isSelected ? -4 : -2 }}
       whileTap={{ scale: 0.95 }}
       transition={{ type: 'spring', stiffness: 400, damping: 25 }}
       className={`
         relative w-12 h-12 sm:w-14 sm:h-14 cursor-grab active:cursor-grabbing select-none
-        ${isDragging ? 'z-50' : isSelected ? 'z-40' : 'z-10'}
+        ${isDragging ? 'z-50' : isMoving ? 'z-50' : isSelected ? 'z-40' : 'z-10'}
       `}
       style={{
         boxShadow: getGlowStyle(),
@@ -110,7 +115,7 @@ export default function LetterDie({
           <motion.div
             className="absolute inset-0 rounded-xl pointer-events-none"
             initial={{ opacity: 0.6, scale: 1 }}
-            animate={{ 
+            animate={{
               opacity: [0.6, 0.3, 0.6],
               scale: [1, 1.05, 1],
             }}
@@ -122,6 +127,27 @@ export default function LetterDie({
             style={{
               border: '2px solid rgba(147, 51, 234, 0.8)',
               boxShadow: '0 0 15px rgba(147, 51, 234, 0.5)',
+            }}
+          />
+        )}
+
+        {/* Moving pulse ring (amber) */}
+        {isMoving && (
+          <motion.div
+            className="absolute inset-0 rounded-xl pointer-events-none"
+            initial={{ opacity: 0.7, scale: 1 }}
+            animate={{
+              opacity: [0.7, 0.4, 0.7],
+              scale: [1, 1.08, 1],
+            }}
+            transition={{
+              duration: 0.8,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+            style={{
+              border: '2px solid rgba(251, 191, 36, 0.9)',
+              boxShadow: '0 0 20px rgba(251, 191, 36, 0.6)',
             }}
           />
         )}

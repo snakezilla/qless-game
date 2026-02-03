@@ -15,6 +15,7 @@ interface GameGridProps {
   onCellClick: (row: number, col: number) => void;
   draggingLetter: Letter | null;
   selectedLetterId: string | null;
+  movingLetterId?: string | null;
 }
 
 export default function GameGrid({
@@ -28,6 +29,7 @@ export default function GameGrid({
   onCellClick,
   draggingLetter,
   selectedLetterId,
+  movingLetterId,
 }: GameGridProps) {
   // Create a map of cell positions to their word validity status
   const cellStatus = new Map<string, { isValid: boolean; isInvalid: boolean }>();
@@ -57,8 +59,10 @@ export default function GameGrid({
           row.map((cell, colIdx) => {
             const key = `${rowIdx},${colIdx}`;
             const status = cellStatus.get(key);
-            const isHighlighted = (draggingLetter || selectedLetterId) && !cell;
+            const isHighlighted = (draggingLetter || selectedLetterId || movingLetterId) && !cell;
             const isSelectHighlighted = selectedLetterId && !cell;
+            const isMoveHighlighted = movingLetterId && !cell;
+            const isMovingCell = !!(cell && movingLetterId === cell.id);
 
             return (
               <motion.div
@@ -72,23 +76,31 @@ export default function GameGrid({
                 }}
                 onDragOver={onDragOver}
                 onClick={() => {
-                  if (!cell && selectedLetterId) {
+                  if (cell) {
+                    // Clicked on a cell with a letter
+                    onLetterClick(cell);
+                  } else if (selectedLetterId || movingLetterId) {
+                    // Clicked on empty cell with selection or moving letter
                     onCellClick(rowIdx, colIdx);
                   }
                 }}
                 className={`
                   relative aspect-square w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14
                   rounded-lg transition-all duration-200
-                  ${cell 
-                    ? 'bg-transparent' 
+                  ${cell
+                    ? 'bg-transparent'
                     : 'bg-slate-700/30 border border-slate-600/30'
                   }
-                  ${isHighlighted 
-                    ? 'bg-slate-600/50 border-slate-500/50 shadow-inner cursor-pointer' 
+                  ${isHighlighted
+                    ? 'bg-slate-600/50 border-slate-500/50 shadow-inner cursor-pointer'
                     : ''
                   }
                   ${isSelectHighlighted
                     ? 'hover:bg-purple-500/20 hover:border-purple-500/50'
+                    : ''
+                  }
+                  ${isMoveHighlighted
+                    ? 'hover:bg-amber-500/20 hover:border-amber-500/50'
                     : ''
                   }
                 `}
@@ -99,6 +111,7 @@ export default function GameGrid({
                       letter={cell}
                       isPlaced={true}
                       isDragging={draggingLetter?.id === cell.id}
+                      isMoving={isMovingCell}
                       onDragStart={onLetterDragStart}
                       onDragEnd={onLetterDragEnd}
                       onClick={() => onLetterClick(cell)}
@@ -108,14 +121,16 @@ export default function GameGrid({
                   </div>
                 )}
 
-                {/* Drop/Place indicator */}
+                {/* Drop/Place/Move indicator */}
                 {isHighlighted && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     className={`absolute inset-2 rounded-lg border-2 border-dashed ${
-                      isSelectHighlighted 
-                        ? 'border-purple-400/50' 
+                      isMoveHighlighted
+                        ? 'border-amber-400/50'
+                        : isSelectHighlighted
+                        ? 'border-purple-400/50'
                         : 'border-blue-400/50'
                     }`}
                   />
