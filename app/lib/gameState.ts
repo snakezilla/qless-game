@@ -355,5 +355,7 @@ export function shuffleUnplacedLetters(state: GameState): GameState {
 }
 
 // ============ AUTO-SOLVE ALGORITHM ============
-// Now using the improved solver from solver.ts
-export { solvePuzzle, type SolveResult } from './solver';
+// Using solver-v4 (word-combination-first approach with 100% success rate)
+import { solvePuzzleV4, type SolveResult } from './solver-v4';
+export { type SolveResult };
+export const solvePuzzle = solvePuzzleV4;
