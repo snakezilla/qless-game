@@ -194,6 +194,70 @@ export default function Game() {
     return null;
   }, []);
 
+  // Keyboard input handler - type letters to place them, backspace to remove
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!gameState || isSolving || gameState.isWon) return;
+      
+      // Ignore if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const key = e.key.toUpperCase();
+      
+      // Handle letter keys A-Z
+      if (/^[A-Z]$/.test(key)) {
+        // Find first unplaced letter matching this key
+        const matchingLetter = gameState.letters.find(
+          (letter) => letter.char === key && !letter.position
+        );
+        
+        if (matchingLetter) {
+          e.preventDefault();
+          // Find best position and place
+          const position = findBestPlacement(gameState);
+          if (position) {
+            const newState = placeLetter(gameState, matchingLetter.id, position.row, position.col);
+            setGameState(newState);
+            setSelectedLetterId(null);
+            setMovingLetterId(null);
+            
+            // Track letter placement
+            const updatedStats = trackLetterPlaced();
+            setStats(updatedStats);
+            
+            if (newState.isWon) {
+              setIsTimerRunning(false);
+              const { stats: winStats, newMilestones } = trackGameWon(timer, hintsUsedThisGame);
+              setStats(winStats);
+              if (newMilestones.length > 0) {
+                setCurrentMilestone(newMilestones[0]);
+              }
+            }
+          }
+        }
+      }
+      
+      // Handle Backspace - remove last placed letter
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        // Find the most recently placed letter (last one with a position)
+        const placedLetters = gameState.letters.filter((l) => l.position);
+        if (placedLetters.length > 0) {
+          // Remove the last placed letter
+          const lastPlaced = placedLetters[placedLetters.length - 1];
+          const newState = removeLetter(gameState, lastPlaced.id);
+          setGameState(newState);
+          setAutoSolved(false);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState, isSolving, findBestPlacement, timer, hintsUsedThisGame]);
+
   // Click on a letter in the tray to auto-place it
   const handleTrayLetterClick = useCallback((letter: Letter) => {
     if (isSolving || !gameState) return;
